@@ -1,9 +1,9 @@
 //
-// IMUI 1.0.0
+// IMA (今) 0.1.0
 // by fergarram
 //
 
-// A lightweight system immediate-mode rendering of HTML interfaces.
+// A tiny immediate-mode UI rendering engine.
 
 //
 // Index:
@@ -17,19 +17,19 @@
 // Core Types
 //
 
-export type props = {
+export type Props = {
 	is?: string;
 	[key: string]: any;
 };
 
-export type tag_function = (
-	props?: props | string | number | null | undefined | boolean | HTMLElement | Function,
-	...children: (HTMLElement | null | undefined | string | boolean | number | Function)[]
+export type TagFunction = (
+	props?: Props | string | number | null | undefined | boolean | HTMLElement | Node | Function,
+	...children: (HTMLElement | Node | null | undefined | string | boolean | number | Function)[]
 ) => HTMLElement;
 
-export type tags_proxy = {
-	[key: string]: tag_function;
-} & ((ns?: string) => tags_proxy);
+export type TagsProxy = {
+	[key: string]: TagFunction;
+} & ((ns?: string) => TagsProxy);
 
 //
 // DOM Element Generation
@@ -42,10 +42,10 @@ const generate_element_id = (() => {
 })();
 
 export const tag_generator =
-	(_: any, name: string): tag_function =>
+	(_: any, name: string): TagFunction =>
 	(...args: any[]): HTMLElement => {
-		let props_obj: props = {};
-		let children: (HTMLElement | null | undefined | string | boolean | number | Function)[] = args;
+		let props_obj: Props = {};
+		let children: (HTMLElement | Node | null | undefined | string | boolean | number | Function)[] = args;
 
 		if (args.length > 0) {
 			const first_arg = args[0];
@@ -102,7 +102,8 @@ export const tag_generator =
 		// Process children and append to element
 		for (const child of children.flat(Infinity)) {
 			if (child != null) {
-				if (child instanceof HTMLElement) {
+				if (child instanceof Node) {
+					// Change from HTMLElement to Node
 					element.appendChild(child);
 				} else if (typeof child !== "function") {
 					// Skip function children in normal processing
@@ -110,11 +111,10 @@ export const tag_generator =
 				}
 			}
 		}
-
 		return element;
 	};
 
-export const tags: tags_proxy = new Proxy({}, { get: tag_generator });
+export const tags: TagsProxy = new Proxy({}, { get: tag_generator });
 
 //
 // Reactive System
@@ -122,7 +122,7 @@ export const tags: tags_proxy = new Proxy({}, { get: tag_generator });
 
 // SOA (Structure of Arrays) approach for reactive components
 const reactive_elements: HTMLElement[] = [];
-const reactive_callbacks: Array<() => HTMLElement> = [];
+const reactive_callbacks: Array<() => HTMLElement | null> = [];
 const reactive_html_cache: string[] = [];
 const reactive_count = { value: 0 };
 
@@ -194,7 +194,9 @@ function update_reactive_components() {
 
 		// Only update if the value has changed
 		if (new_value !== reactive_text_prev_values[i]) {
+			// setTimeout(() => {
 			element.textContent = String(new_value);
+			// }, 0);
 			reactive_text_prev_values[i] = new_value;
 			text_updates++;
 		}
@@ -213,6 +215,7 @@ function update_reactive_components() {
 
 		// Only update if the value has changed
 		if (new_value !== reactive_attr_prev_values[i]) {
+			// setTimeout(() => {
 			if (new_value === true) {
 				element.setAttribute(attr_name, "");
 			} else if (new_value === false || new_value == null) {
@@ -220,6 +223,7 @@ function update_reactive_components() {
 			} else {
 				element.setAttribute(attr_name, String(new_value));
 			}
+			// }, 0);
 
 			reactive_attr_prev_values[i] = new_value;
 			attributes_updated++;
@@ -228,16 +232,30 @@ function update_reactive_components() {
 
 	// Update all elements in all components
 	for (let i = 0; i < reactive_count.value; i++) {
-		const new_element = reactive_callbacks[i]();
-		const new_html = new_element.outerHTML;
+		const element = reactive_elements[i];
 
-		// Only replace if the HTML content has actually changed
-		if (new_html !== reactive_html_cache[i]) {
-			reactive_elements[i].replaceWith(new_element);
-			reactive_elements[i] = new_element;
-			reactive_html_cache[i] = new_html;
-			components_updated++;
+		// Only proceed if the element is still in the DOM
+		if (!element.isConnected) continue;
+
+		const new_element = reactive_callbacks[i]();
+
+		// Calculate a string representation for comparison
+		let new_html = "";
+		if (new_element instanceof Element) {
+			new_html = new_element.outerHTML;
 		}
+
+		// If nothing changed, skip
+		if (new_html === reactive_html_cache[i]) continue;
+
+		// Determine what to render
+		const actual_new_element = new_element || document.createComment(`reactive-component-${i}`);
+
+		// Replace the old element with the new one
+		element.replaceWith(actual_new_element);
+		reactive_elements[i] = actual_new_element as any;
+		reactive_html_cache[i] = new_html;
+		components_updated++;
 	}
 
 	const end_time = performance.now();
@@ -273,24 +291,31 @@ function request_animation_frame() {
 	}
 }
 
-export function reactive(callback: () => HTMLElement): HTMLElement {
-	// Generate a unique ID for this reactive component
+export function reactive(callback: () => HTMLElement | null): Node {
 	const component_index = generate_element_id();
-
-	// Create the initial element
 	const element = callback();
-	const html = element.outerHTML;
 
-	// Store component data in our parallel arrays
-	reactive_elements[component_index] = element;
+	// Create a placeholder comment node
+	const placeholder = document.createComment(`reactive-component-${component_index}`);
+
+	// If the initial render is null, use the placeholder
+	const actual_element = element || placeholder;
+
+	// Store component data - need to handle different Node types
+	reactive_elements[component_index] = actual_element as any; // Cast for compatibility
 	reactive_callbacks[component_index] = callback;
-	reactive_html_cache[component_index] = html;
+
+	// Store string representation - handle both Element and other Node types
+	if (element instanceof Element) {
+		reactive_html_cache[component_index] = element.outerHTML;
+	} else {
+		reactive_html_cache[component_index] = ""; // Empty string for non-Elements
+	}
+
 	reactive_count.value++;
 
-	// Start the animation frame loop
 	request_animation_frame();
-
-	return element;
+	return actual_element;
 }
 
 // Function to register a reactive attribute
@@ -318,7 +343,7 @@ function register_reactive_attr(element: HTMLElement, attr_name: string, callbac
 	request_animation_frame();
 }
 
-// New function to register reactive text content
+// Function to register reactive text content
 function register_reactive_text(element: HTMLElement, callback: () => any) {
 	const text_index = reactive_text_count.value;
 

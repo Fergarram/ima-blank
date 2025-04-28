@@ -6,7 +6,7 @@ import { mkdir } from "fs/promises";
 const DEFAULT_SRC_FILE = "./src/index.ts";
 const DEFAULT_OUT_DIR = "./public/dist";
 const DEFAULT_PUBLIC_DIR = "./public";
-const DEFAULT_PORT = 1961;
+const DEFAULT_PORT = 4000;
 
 // Parse command line arguments
 const args = process.argv.slice(2);
